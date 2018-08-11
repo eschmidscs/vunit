@@ -48,6 +48,7 @@ architecture a of tb_wishbone_master is
 
   constant tb_cfg : tb_cfg_t := decode(encoded_tb_cfg);
 
+  signal clk_cnt : integer := 0;
   signal clk    : std_logic := '0';
   signal adr    : std_logic_vector(tb_cfg.adr_width-1 downto 0);
   signal dat_i  : std_logic_vector(tb_cfg.dat_width-1 downto 0);
@@ -81,6 +82,10 @@ begin
     variable bus_rd_ref2 : bus_reference_t;
     type bus_reference_arr_t is array (0 to tb_cfg.num_cycles-1) of bus_reference_t;
     variable rd_ref : bus_reference_arr_t;
+    variable cnt_req_max : integer;
+    variable cnt_req_min : integer;
+    variable cnt_start   : integer;
+    variable cnt_elapsed : integer;
   begin
     test_runner_setup(runner, runner_cfg);
     set_format(display_handler, verbose, true);
@@ -108,10 +113,22 @@ begin
 --      check_equal(tmp, value, "read data");
     elsif run("wr block rd single") then
       info(tb_logger, "Writing...");
+      cnt_start := clk_cnt;
       for i in 0 to tb_cfg.num_cycles-1 loop
         write_bus(net, bus_handle, i*(sel'length),
             std_logic_vector(to_unsigned(i, dat_i'length)));
       end loop;
+
+      wait_until_idle(net, bus_handle);
+      if tb_cfg.num_cycles > 10 then -- don't test probabilistic stuff for small sample sets
+        cnt_elapsed := clk_cnt-cnt_start;
+        if tb_cfg.stall_prob = 0.0 then -- eschmid: I'm not sure if stalling with a probability is the correct way for verification. Anyway, I'm not mathematically fit enough to check this ;)
+          cnt_req_max := integer(real(tb_cfg.num_cycles+1) / (tb_cfg.strobe_prob * tb_cfg.ack_prob) * 1.1 + 0.5);
+          check_relation(cnt_elapsed <= cnt_req_max, "Write block took too long");
+          cnt_req_min := integer(real(tb_cfg.num_cycles+1) / tb_cfg.strobe_prob * 0.95);
+          check_relation(cnt_elapsed >= cnt_req_min, "Write block took less time than expected");
+        end if;
+      end if;
 
       info(tb_logger, "Reading...");
       for i in 0 to tb_cfg.num_cycles-1 loop
@@ -121,6 +138,7 @@ begin
 
     elsif run("wr block rd block") then
       info(tb_logger, "Writing...");
+      cnt_start := clk_cnt;
       for i in 0 to tb_cfg.num_cycles-1 loop
         write_bus(net, bus_handle, i*(sel'length),
             std_logic_vector(to_unsigned(i, dat_i'length)));
@@ -136,6 +154,17 @@ begin
         await_read_bus_reply(net, rd_ref(i), tmp);
         check_equal(tmp, std_logic_vector(to_unsigned(i, dat_i'length)), "read data");
       end loop;
+
+      if tb_cfg.num_cycles > 10 then -- don't test probabilistic stuff for small sample sets
+        cnt_elapsed := clk_cnt-cnt_start;
+        if tb_cfg.stall_prob = 0.0 then -- eschmid: I'm not sure if stalling with a probability is the correct way for verification. Anyway, I'm not mathematically fit enough to check this ;)
+          cnt_req_max := integer(real((tb_cfg.num_cycles+1)*2+1) / (tb_cfg.strobe_prob * tb_cfg.ack_prob) * 1.1 + 0.5);
+          check_relation(cnt_elapsed <= cnt_req_max, "Write and read block took too long");
+          cnt_req_min := integer(real((tb_cfg.num_cycles+1)*2+1) / tb_cfg.strobe_prob * 0.95);
+          check_relation(cnt_elapsed >= cnt_req_min, "Write and read block took less time than expected");
+        end if;
+      end if;
+
     end if;
 
     info(tb_logger, "Done, quit...");
@@ -180,5 +209,7 @@ begin
     );
 
   clk <= not clk after 5 ns;
+
+  clk_cnt <= clk_cnt + 1 when rising_edge(clk) else clk_cnt;
 
 end architecture;

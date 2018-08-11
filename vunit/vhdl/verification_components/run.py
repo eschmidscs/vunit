@@ -11,6 +11,7 @@ from itertools import product
 root = dirname(__file__)
 
 ui = VUnit.from_argv()
+ui.enable_check_preprocessing()
 ui.add_random()
 ui.add_verification_components()
 lib = ui.library("vunit_lib")
